@@ -11,6 +11,14 @@ import org.apache.hadoop.mapred.JobConf
 import org.apache.spark.sql.SQLContext
 import org.apache.spark.{SparkConf, SparkContext}
 
+/**
+  * 功能描述:
+  * 〈 上下文标签（整合标签项）〉
+  *
+  * @since: 1.0.0
+  * @Author:SiXiang
+  * @Date: 2019/6/6 0:12
+  */
 object ContextTags {
   def main(args: Array[String]): Unit = {
     // 首先判断目录是否为空
@@ -41,7 +49,7 @@ object ContextTags {
 
     // 停用词库
     val stopWordMap = sc.textFile(stopWordPath)
-      .map((_,0))
+      .map((_, 0))
       .collect()
       .toMap
     val globalStopWord = sc.broadcast(stopWordMap)

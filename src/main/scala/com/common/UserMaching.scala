@@ -3,6 +3,14 @@ package com.common
 import org.apache.commons.lang3.StringUtils
 import org.apache.spark.sql.Row
 
+/**
+  * 功能描述:
+  * 〈 对15个用户标识字段进行匹配，后续使用 spark graphx 来统一分类 〉
+  *
+  * @since: 1.0.0
+  * @Author:SiXiang
+  * @Date: 2019/6/6 0:13
+  */
 object UserMaching {
   def getAnyUserId(row: Row): String = {
     row match {

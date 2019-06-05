@@ -5,19 +5,20 @@ package com.utils
   */
 object String2IntOrDouble {
   // 转换Int
-  def toInt(str:String):Int={
-    try{
+  def toInt(str: String): Int = {
+    try {
       str.toInt
-    }catch {
-      case _:Exception =>0
+    } catch {
+      case _: Exception => 0
     }
   }
+
   // 转换Double
-  def toDouble(str:String):Double={
-    try{
+  def toDouble(str: String): Double = {
+    try {
       str.toDouble
-    }catch {
-      case _:Exception =>0
+    } catch {
+      case _: Exception => 0
     }
   }
 }
