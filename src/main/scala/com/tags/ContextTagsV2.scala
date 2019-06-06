@@ -67,7 +67,8 @@ object ContextTagsV2 {
         val allUserId = UserMaching.getUserIdAll(row)
         (allUserId, row)
       })
-    // 构建graph点集合
+
+    // 构建graph点集合  jedis 有些问题
     val vertices: RDD[(Long, List[(String, Int)])] = baseRDD
       .mapPartitions(partition => {
         val jedis = JedisConnectionPool.getConnection()
