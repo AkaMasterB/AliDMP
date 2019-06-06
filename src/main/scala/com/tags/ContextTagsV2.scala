@@ -2,25 +2,26 @@ package com.tags
 
 import com.common.UserMaching
 import com.typesafe.config.ConfigFactory
-import org.apache.hadoop.hbase.client.{ConnectionFactory, Put}
-import org.apache.hadoop.hbase.io.ImmutableBytesWritable
+import com.utils.JedisConnectionPool
+import org.apache.hadoop.hbase.client.ConnectionFactory
 import org.apache.hadoop.hbase.mapred.TableOutputFormat
-import org.apache.hadoop.hbase.util.Bytes
 import org.apache.hadoop.hbase.{HColumnDescriptor, HTableDescriptor, TableName}
 import org.apache.hadoop.mapred.JobConf
-import org.apache.spark.sql.SQLContext
+import org.apache.spark.graphx.{Edge, Graph, VertexId, VertexRDD}
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.{Row, SQLContext}
 import org.apache.spark.{SparkConf, SparkContext}
 
 /**
-  * ······················最初版本·······················
+  * ······················最终版本·······················
   * 功能描述:
-  * 〈 上下文标签（整合标签项）〉
+  * 〈 上下文标签（整合标签项），借助spark图计算来统一用户〉
   *
   * @since: 1.0.0
   * @Author:SiXiang
   * @Date: 2019/6/6 0:12
   */
-object ContextTags {
+object ContextTagsV2 {
   def main(args: Array[String]): Unit = {
     // 首先判断目录是否为空
     if (args.length != 5) {
@@ -56,38 +57,86 @@ object ContextTags {
     val globalStopWord = sc.broadcast(stopWordMap)
 
     // 初始化hbase、创建表
-    val jobConf = initHtable(sc, "tags")
+    //    val jobConf = initHtable(sc, "tags")
 
-    sQLContext.read.parquet(inputPath)
+
+    // 获取所有用户字段(不同方式记录)
+    val baseRDD = sQLContext.read.parquet(inputPath)
       .filter(UserMaching.hasNeedOneUserId)
       .map(row => {
-        val userId = UserMaching.getAnyUserId(row)
+        val allUserId = UserMaching.getUserIdAll(row)
+        (allUserId, row)
+      })
+    // 构建graph点集合
+    val vertices: RDD[(Long, List[(String, Int)])] = baseRDD
+      .mapPartitions(partition => {
+        val jedis = JedisConnectionPool.getConnection()
+        val newPartition: Iterator[(List[String], Row, List[(String, Int)])] = partition
+          .map(t => {
+            val bAreaTag = BusinessAreaTag.makeTags(t._2, jedis)
+            (t._1, t._2, bAreaTag)
+          })
+        jedis.close()
+        newPartition
+      })
+      .flatMap(tp => {
+        val row = tp._2
         val adSpaceTypeTag = AdSpaceTypeTag.makeTags(row)
         val appTag = AppTag.makeTags(row, globalDict)
         val adPlatformTag = AdPlatformProviderTag.makeTags(row)
         val deviceTag = DeviceTag.makeTags(row)
         val kwdTag = KeyWordTag.makeTags(row, globalStopWord)
         val locTag = LocationTag.makeTags(row)
-        (userId, adSpaceTypeTag ++ appTag ++ adPlatformTag ++ deviceTag ++ kwdTag ++ locTag)
+        // 把所有的标签放到一起形成一个集合
+        val totalList = adSpaceTypeTag ++ appTag ++ adPlatformTag ++ deviceTag ++ kwdTag ++ locTag ++ tp._3
+        // 匹配格式，拼接 UserId-List 和 Tags-List
+        val target = tp._1.map((_, 0)) ++ totalList
+        // 保证一个Id携带者标签，其他的Id的value都是空的集合
+        tp._1.map(uId => {
+          if (tp._1.head.equals(uId)) {
+            (uId.hashCode.toLong, target)
+          } else {
+            (uId.hashCode.toLong, List.empty)
+          }
+        })
       })
-      .reduceByKey((list1, list2) => (list1 ::: list2)
-        .groupBy(_._1)
-        //        .mapValues(_.size)
-        .mapValues(_.foldLeft[Int](0)(_ + _._2))
-        .toList
-      )
+
+
+    // 构建graph边集合
+    val edges = baseRDD.flatMap(tp => {
+      tp._1.map(uId => {
+        Edge(tp._1.head.hashCode, uId.hashCode.toLong, 0)
+      })
+    })
+
+    // 构建图
+    val graph = Graph(vertices, edges)
+    // 顶点
+    val cc: VertexRDD[VertexId] = graph.connectedComponents().vertices
+    // 合并归一
+    cc.join(vertices)
       .map {
-        case (userId, userTags) => {
-          // rowkey
-          val put = new Put(Bytes.toBytes(userId))
-          // data
-          val tags = userTags.map(t => t._1 + "," + t._2).mkString(";")
-          // 列簇--列--数据
-          put.addImmutable(Bytes.toBytes("tags"), Bytes.toBytes(s"$date"), Bytes.toBytes(tags))
-          (new ImmutableBytesWritable(), put)
-        }
+        case (uId, (comm, tagsAndUid)) => (comm, tagsAndUid)
       }
-      .saveAsHadoopDataset(jobConf)
+      .reduceByKey(
+        (list1, list2) => list1 ::: list2
+          .groupBy(_._1)
+          .mapValues(_.size)
+          .toList
+      )
+      .foreach(println)
+    //      .map {
+    //        case (userId, userTags) => {
+    //          // rowkey
+    //          val put = new Put(Bytes.toBytes(userId))
+    //          // data
+    //          val tags = userTags.map(t => t._1 + "," + t._2).mkString(";")
+    //          // 列簇--列--数据
+    //          put.addImmutable(Bytes.toBytes("tags"), Bytes.toBytes(s"$date"), Bytes.toBytes(tags))
+    //          (new ImmutableBytesWritable(), put)
+    //        }
+    //      }
+    //      .saveAsHadoopDataset(jobConf)
   }
 
   /**
